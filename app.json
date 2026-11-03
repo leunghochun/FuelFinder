@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Fuel Finder",
+    "slug": "fuel-finder",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Fuel Finder uses your location to sort nearby fuel stations and show your position on the map."
+      },
+      "bundleIdentifier": "com.fuelfinder.app"
+    },
+    "android": {
+      "package": "com.fuelfinder.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "./plugins/withFuelFinderAndroidAuto",
+      "./plugins/withFuelFinderCarPlay",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Fuel Finder uses your location to sort nearby fuel stations and show your position on the map."
+        }
+      ]
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "fuelfinder-api-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Server-side proxy for the Fuel Finder OAuth and data APIs.",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "fetch:data": "node dist/scheduler.js --once",
+    "schedule:data": "node dist/scheduler.js",
+    "test": "tsx --test tests/config.test.ts tests/fetchFuelData.test.ts tests/fuelFinderClient.test.ts tests/fuelFinderService.test.ts tests/scheduler.test.ts tests/server.test.ts tests/snapshotStore.test.ts tests/stationSearch.test.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "fuelfinder": "file:.."
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30",
+    "tsx": "^4.20.3",
+    "typescript": "~5.8.3"
+  },
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "author": "",
+  "license": "ISC"
+}
