@@ -1,5 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
+import { Asset } from 'expo-asset';
+import { File } from 'expo-file-system';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -15,9 +17,18 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import MapView, { Callout, Circle, Marker, PROVIDER_DEFAULT, Region } from 'react-native-maps';
+import { LeafletView, MapShapeType, WebViewLeafletEvents } from 'react-native-leaflet-view';
+import type { MapMarker, MapShape, WebviewLeafletMessage } from 'react-native-leaflet-view';
 import { LocateFixed, MapPin, Navigation, RotateCw } from 'lucide-react-native';
 import { FuelPrice, FuelStation } from './src/domain/stations';
+import { getNavigationUrl, NavigationApp } from './src/services/navigation';
+import {
+  DEFAULT_SEARCH_RADIUS_MILES,
+  loadSearchRadiusMiles,
+  saveSearchRadiusMiles,
+  SEARCH_RADIUS_OPTIONS,
+  SearchRadiusMiles,
+} from './src/services/searchRadius';
 import { loadStations, StationLoadResult } from './src/services/stations';
 
 const colors = {
@@ -31,18 +42,41 @@ const colors = {
   orange: '#E47B43',
 };
 
-const initialRegion: Region = {
+type MapPoint = { lat: number; lng: number };
+
+const initialRegion = {
   latitude: 54.2,
   longitude: -2.7,
-  latitudeDelta: 7.5,
-  longitudeDelta: 7.5,
 };
-const radiusOptions = [1, 5, 10, 20];
+function mapPoint(point: { latitude: number; longitude: number }): MapPoint {
+  return { lat: point.latitude, lng: point.longitude };
+}
 
-function regionAround(point: { latitude: number; longitude: number }, radiusMiles: number): Region {
-  const latitudeDelta = Math.max((radiusMiles * 2) / 69, 0.02);
-  const longitudeDelta = latitudeDelta / Math.max(Math.cos(point.latitude * Math.PI / 180), 0.2);
-  return { ...point, latitudeDelta, longitudeDelta };
+function zoomForRadius(latitude: number, radiusMiles: number, mapHeight: number): number {
+  const radiusMeters = radiusMiles * 1609.34;
+  const metersPerPixel = (radiusMeters * 2) / mapHeight;
+  const equatorialMetersPerPixel = 156543.03392 * Math.max(Math.cos(latitude * Math.PI / 180), 0.2);
+  return Math.max(1, Math.min(19, Math.floor(Math.log2(equatorialMetersPerPixel / metersPerPixel))));
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character] ?? character);
+}
+
+function stationMarkerIcon(label: string, isLowestPrice: boolean, selected: boolean): string {
+  const markerColor = isLowestPrice ? colors.orange : selected ? colors.green : colors.ink;
+  const labelColor = isLowestPrice ? colors.ink : colors.lime;
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;font-family:Arial,sans-serif">
+    ${isLowestPrice ? `<span style="padding:2px 5px;border-radius:3px;background:${colors.orange};color:${colors.white};font-size:8px;font-weight:900">LOWEST</span>` : ''}
+    <span style="max-width:100px;overflow:hidden;text-overflow:ellipsis;padding:3px 5px;border-radius:4px;background:${markerColor};color:${labelColor};font-size:9px;font-weight:800;white-space:nowrap">${escapeHtml(label)}</span>
+    <span style="width:18px;height:18px;border:3px solid ${markerColor};border-radius:50%;background:${isLowestPrice ? '#FFF0E6' : selected ? colors.lime : colors.white}"></span>
+  </div>`;
 }
 
 function bestPrice(prices: FuelPrice[]): FuelPrice | undefined {
@@ -65,20 +99,19 @@ function formatPrice(price: FuelPrice | undefined): string {
   return price ? `${price.amount.toFixed(1)}p` : 'Price n/a';
 }
 
+function formatEffectiveTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return timestamp;
+  return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 function markerFuelName(fuel: string): string {
   const separatorIndex = fuel.indexOf('_');
   return separatorIndex === -1 ? fuel : fuel.slice(0, separatorIndex + 2);
 }
 
-function openMapApp(app: 'google' | 'waze' | 'apple', station: FuelStation) {
-  const destination = `${station.latitude},${station.longitude}`;
-  const urls = {
-    google: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`,
-    waze: `https://waze.com/ul?ll=${encodeURIComponent(destination)}&navigate=yes`,
-    apple: `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`,
-  };
-
-  void Linking.openURL(urls[app]).catch(() => {
+function openMapApp(app: NavigationApp, station: FuelStation) {
+  void Linking.openURL(getNavigationUrl(app, station)).catch(() => {
     Alert.alert('Unable to open maps', 'No compatible maps app could open this destination.');
   });
 }
@@ -101,7 +134,16 @@ function StationRow({
   const lowestPrice = bestPriceForProducts(station.prices, selectedProductKeys);
 
   return (
-    <View style={[styles.stationRow, selected && styles.stationRowSelected]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Show ${station.name} on map`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.stationRow,
+        selected && styles.stationRowSelected,
+        pressed && styles.pressed,
+      ]}
+    >
       {selected ? (
         <Pressable
           accessibilityRole="button"
@@ -119,12 +161,7 @@ function StationRow({
         </View>
       )}
       <View style={styles.stationMain}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Show ${station.name} on map`}
-          onPress={onPress}
-          style={({ pressed }) => [styles.stationInfo, pressed && styles.pressed]}
-        >
+        <View style={styles.stationInfo}>
           <View style={styles.stationDetailsRow}>
             <Text numberOfLines={1} style={styles.stationName}>{station.name}</Text>
             <Text numberOfLines={1} style={styles.stationAddress}>{station.address || station.postcode || station.brand}</Text>
@@ -133,7 +170,7 @@ function StationRow({
               <Text style={styles.distanceText}>{distance === undefined ? 'Distance unavailable' : `${distance.toFixed(1)} mi away`}</Text>
             </View>
           </View>
-        </Pressable>
+        </View>
         {station.prices.length > 0 ? (
           <ScrollView
             horizontal
@@ -145,17 +182,24 @@ function StationRow({
                 key={`${price.fuel}-${index}`}
                 style={[styles.fuelPrice, price.amount === lowestPrice?.amount && styles.fuelPriceLowest]}
               >
-                <Text style={styles.fuelName}>{markerFuelName(price.fuel)}</Text>
-                <Text style={[styles.price, price.amount === lowestPrice?.amount && styles.lowestPrice]}>
-                  {formatPrice(price)}
-                </Text>
-                {price.amount === lowestPrice?.amount ? <Text style={styles.lowestBadge}>LOWEST</Text> : null}
+                <View style={styles.fuelPriceHeader}>
+                  <Text style={styles.fuelName}>{markerFuelName(price.fuel)}</Text>
+                  <Text style={[styles.price, price.amount === lowestPrice?.amount && styles.lowestPrice]}>
+                    {formatPrice(price)}
+                  </Text>
+                  {price.amount === lowestPrice?.amount ? <Text style={styles.lowestBadge}>LOWEST</Text> : null}
+                </View>
+                {price.priceChangeEffectiveTimestamp ? (
+                  <Text style={styles.priceEffectiveTimestamp}>
+                    Effective {formatEffectiveTimestamp(price.priceChangeEffectiveTimestamp)}
+                  </Text>
+                ) : null}
               </View>
             ))}
           </ScrollView>
         ) : <Text style={styles.noPrice}>Prices unavailable</Text>}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -165,17 +209,22 @@ export default function App() {
   const [stations, setStations] = useState<FuelStation[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<string>();
   const [location, setLocation] = useState<{ latitude: number; longitude: number }>();
+  const [mapCenterPosition, setMapCenterPosition] = useState<MapPoint>({
+    lat: initialRegion.latitude,
+    lng: initialRegion.longitude,
+  });
+  const [mapZoom, setMapZoom] = useState(6);
+  const [leafletHtml, setLeafletHtml] = useState<string>();
+  const [mapError, setMapError] = useState<string>();
   const locationRef = useRef<{ latitude: number; longitude: number } | undefined>(undefined);
   const stationRequestIdRef = useRef(0);
-  const mapRef = useRef<MapView | null>(null);
-  const markerRefs = useRef(new Map<string, { showCallout: () => void }>());
-  const radiusMilesRef = useRef(5);
+  const radiusMilesRef = useRef<SearchRadiusMiles>(DEFAULT_SEARCH_RADIUS_MILES);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>();
   const [source, setSource] = useState<StationLoadResult['source']>();
   const [updatedAt, setUpdatedAt] = useState<string>();
-  const [radiusMiles, setRadiusMiles] = useState(5);
+  const [radiusMiles, setRadiusMiles] = useState<SearchRadiusMiles>(DEFAULT_SEARCH_RADIUS_MILES);
   const [sortMode, setSortMode] = useState<'distance' | 'price'>('distance');
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [locationLoading, setLocationLoading] = useState(true);
@@ -205,6 +254,47 @@ export default function App() {
     (lowest, station) => Math.min(lowest, bestPriceForProducts(station.prices, selectedProductKeys)?.amount ?? Infinity),
     Infinity,
   );
+  const mapMarkers = useMemo<MapMarker[]>(() => {
+    const markers: MapMarker[] = location
+      ? [{
+        id: 'current-location',
+        position: mapPoint(location),
+        icon: '<div style="width:18px;height:18px;border:4px solid white;border-radius:50%;background:#4285F4;box-shadow:0 1px 5px #555"></div>',
+        size: [18, 18],
+        iconAnchor: [9, 9],
+        title: 'Your location',
+      }]
+      : [];
+    filteredNearbyStations.forEach((station) => {
+      const price = bestPriceForProducts(station.prices, selectedProductKeys);
+      const isLowestPrice = price?.amount === lowestNearbyPrice;
+      const markerLabel = price
+        ? `${markerFuelName(price.fuel)}: ${price.amount.toFixed(1)}`
+        : 'No price';
+      const priceDescription = station.prices.length > 0
+        ? station.prices.map((fuelPrice) => `${fuelPrice.fuel}: ${formatPrice(fuelPrice)}`).join(' · ')
+        : 'Prices unavailable';
+      markers.push({
+        id: station.id,
+        position: { lat: station.latitude, lng: station.longitude },
+        icon: stationMarkerIcon(markerLabel, isLowestPrice, selectedStationId === station.id),
+        size: [110, 50],
+        iconAnchor: [55, 50],
+        title: `${station.name} · ${station.address || station.postcode || station.brand} · ${priceDescription}`,
+      });
+    });
+    return markers;
+  }, [filteredNearbyStations, location, lowestNearbyPrice, selectedProductKeys, selectedStationId]);
+  const mapShapes = useMemo<MapShape[]>(
+    () => location ? [{
+      id: 'search-radius',
+      shapeType: MapShapeType.CIRCLE,
+      center: mapPoint(location),
+      radius: radiusMiles * 1609.34,
+      color: colors.green,
+    }] : [],
+    [location, radiusMiles],
+  );
   const distinctProducts = useMemo(() => {
     const products = new Map<string, string>();
     stations.forEach((station) => {
@@ -218,6 +308,26 @@ export default function App() {
     });
     return Array.from(products.values()).sort((a, b) => a.localeCompare(b));
   }, [stations, selectedProducts]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const asset = Asset.fromModule(require('./assets/leaflet.html'));
+        await asset.downloadAsync();
+        if (!asset.localUri) throw new Error('Leaflet map asset could not be loaded.');
+        const html = await new File(asset.localUri).text();
+        if (active) setLeafletHtml(html);
+      } catch (loadError) {
+        if (active) {
+          setMapError(loadError instanceof Error ? loadError.message : 'Leaflet map could not be loaded.');
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function toggleProductFilter(product: string) {
     const productKey = product.trim().toLocaleLowerCase();
@@ -241,7 +351,8 @@ export default function App() {
       const point = { latitude: current.coords.latitude, longitude: current.coords.longitude };
       locationRef.current = point;
       setLocation(point);
-      mapRef.current?.animateToRegion(regionAround(point, radiusMilesRef.current), 350);
+      setMapCenterPosition(mapPoint(point));
+      setMapZoom(zoomForRadius(point.latitude, radiusMilesRef.current, mapHeight));
       return point;
     } catch (locationFailure) {
       setLocationError(
@@ -284,14 +395,11 @@ export default function App() {
         setError(`Fresh station data loaded but could not be saved: ${result.cacheError}`);
       }
       if (locationRef.current) {
-        mapRef.current?.animateToRegion(regionAround(locationRef.current, radiusMilesRef.current), 350);
+        setMapCenterPosition(mapPoint(locationRef.current));
+        setMapZoom(zoomForRadius(locationRef.current.latitude, radiusMilesRef.current, mapHeight));
       } else if (result.source === 'network' && result.stations[0]) {
-        mapRef.current?.animateToRegion({
-          latitude: result.stations[0].latitude,
-          longitude: result.stations[0].longitude,
-          latitudeDelta: 0.2,
-          longitudeDelta: 0.2,
-        }, 350);
+        setMapCenterPosition(mapPoint(result.stations[0]));
+        setMapZoom(12);
       }
     } catch (loadError) {
       if (requestId === stationRequestIdRef.current) {
@@ -308,8 +416,19 @@ export default function App() {
   useEffect(() => {
     let active = true;
     void (async () => {
+      let initialRadius = DEFAULT_SEARCH_RADIUS_MILES;
+      try {
+        initialRadius = await loadSearchRadiusMiles();
+      } catch (preferenceError) {
+        console.error('Could not restore the saved station search radius.', preferenceError);
+        if (active) setError('Could not restore the saved search radius; using 5 miles.');
+      }
+      if (!active) return;
+      radiusMilesRef.current = initialRadius;
+      setRadiusMiles(initialRadius);
+
       const point = await updateLocation();
-      if (active) void refreshStations(false, point ?? initialRegion);
+      if (active) void refreshStations(false, point ?? initialRegion, initialRadius);
     })();
     return () => {
       active = false;
@@ -317,10 +436,17 @@ export default function App() {
     };
   }, []);
 
-  function selectRadius(radius: number) {
+  function selectRadius(radius: SearchRadiusMiles) {
     radiusMilesRef.current = radius;
     setRadiusMiles(radius);
-    if (location) mapRef.current?.animateToRegion(regionAround(location, radius), 350);
+    void saveSearchRadiusMiles(radius).catch((preferenceError: unknown) => {
+      console.error('Could not save the selected station search radius.', preferenceError);
+      setError('Could not save the selected search radius.');
+    });
+    if (location) {
+      setMapCenterPosition(mapPoint(location));
+      setMapZoom(zoomForRadius(location.latitude, radius, mapHeight));
+    }
     void refreshStations(true, locationRef.current ?? initialRegion, radius);
   }
 
@@ -331,13 +457,27 @@ export default function App() {
 
   function focusStation(station: FuelStation) {
     setSelectedStationId(station.id);
-    mapRef.current?.animateToRegion({
-      latitude: station.latitude,
-      longitude: station.longitude,
-      latitudeDelta: 0.025,
-      longitudeDelta: 0.025,
-    }, 400);
-    markerRefs.current.get(station.id)?.showCallout();
+    setMapCenterPosition(mapPoint(station));
+    setMapZoom(14);
+  }
+
+  function handleMapMessage(message: WebviewLeafletMessage) {
+    if (message.error) {
+      setMapError(message.error);
+      return;
+    }
+    if (message.event !== WebViewLeafletEvents.ON_MAP_MARKER_CLICKED) return;
+    const stationId = message.payload?.mapMarkerID;
+    if (!stationId || stationId === 'current-location') return;
+    const station = filteredNearbyStations.find((item) => item.id === stationId);
+    if (!station) return;
+    setSelectedStationId(station.id);
+    console.log('[Fuel Finder] Station selected:', {
+      loadedFrom: source ?? 'unknown',
+      station: { ...station, sourceData: station.sourceData ?? null },
+      priceApiData: station.priceSourceData ?? null,
+      prices: station.prices,
+    });
   }
 
   function chooseDirectionsApp(station: FuelStation) {
@@ -406,7 +546,7 @@ export default function App() {
       <View style={styles.radiusRow}>
         <Text style={styles.radiusLabel}>RADIUS</Text>
         <View style={styles.radiusOptions}>
-          {radiusOptions.map((radius) => (
+          {SEARCH_RADIUS_OPTIONS.map((radius) => (
             <Pressable
               key={radius}
               accessibilityRole="button"
@@ -430,92 +570,36 @@ export default function App() {
       </View>
 
       <View style={[styles.mapFrame, { height: mapHeight }]}>
-        <MapView
-          ref={mapRef}
-          provider={PROVIDER_DEFAULT}
-          style={StyleSheet.absoluteFill}
-          initialRegion={initialRegion}
-          onMapReady={() => {
-            const point = locationRef.current;
-            if (point) mapRef.current?.animateToRegion(regionAround(point, radiusMilesRef.current), 350);
-          }}
-          showsUserLocation={Boolean(location)}
-          showsMyLocationButton={false}
-          mapType="standard"
-        >
-          {location ? (
-            <Circle
-              center={location}
-              radius={radiusMiles * 1609.34}
-              strokeColor="rgba(23, 107, 77, 0.75)"
-              strokeWidth={1.5}
-              fillColor="rgba(23, 107, 77, 0.08)"
-            />
-          ) : null}
-          {filteredNearbyStations.map((station) => {
-            const price = bestPriceForProducts(station.prices, selectedProductKeys);
-            const isLowestPrice = price?.amount === lowestNearbyPrice;
-            const markerDescription = price
-              ? `${price.fuel}: ${price.amount.toFixed(1)}`
-              : 'No price available';
-            const distanceDescription = station.distanceMiles === undefined
-              ? ''
-              : ` | ${station.distanceMiles.toFixed(1)} mi away`;
-            return (
-              <Marker
-                key={station.id}
-                ref={(marker) => {
-                  if (marker) markerRefs.current.set(station.id, marker);
-                  else markerRefs.current.delete(station.id);
-                }}
-                coordinate={{ latitude: station.latitude, longitude: station.longitude }}
-                anchor={{ x: 0.5, y: 1 }}
-                title={station.name}
-                description={`${markerDescription}${distanceDescription}`}
-                onPress={() => {
-                  setSelectedStationId(station.id);
-                  console.log('[Fuel Finder] Station selected:', {
-                    loadedFrom: source ?? 'unknown',
-                    station: { ...station, sourceData: station.sourceData ?? null },
-                    priceApiData: station.priceSourceData ?? null,
-                    prices: station.prices,
-                  });
-                }}
-                tracksViewChanges
-              >
-                <View style={styles.markerContainer}>
-                  {isLowestPrice ? <Text style={styles.markerLowestBadge}>LOWEST</Text> : null}
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.markerLabel, isLowestPrice && styles.markerLabelLowest]}
-                  >
-                    {price ? `${markerFuelName(price.fuel)}: ${price.amount.toFixed(1)}` : 'No price'}
-                  </Text>
-                  <MapPin
-                    size={24}
-                    color={isLowestPrice ? colors.orange : selectedStationId === station.id ? colors.green : colors.ink}
-                    fill={isLowestPrice ? '#FFF0E6' : selectedStationId === station.id ? colors.lime : colors.white}
-                    strokeWidth={2.5}
-                  />
-                </View>
-                <Callout tooltip>
-                  <View style={styles.stationCallout}>
-                    <Text style={styles.calloutTitle}>{station.name}</Text>
-                    <Text style={styles.calloutAddress}>{station.address || station.postcode || station.brand}</Text>
-                    {station.prices.length > 0 ? station.prices.map((fuelPrice, index) => (
-                      <View key={`${fuelPrice.fuel}-${index}`} style={styles.calloutPriceRow}>
-                        <Text style={styles.calloutFuel}>{fuelPrice.fuel}</Text>
-                        <Text style={styles.calloutAmount}>{formatPrice(fuelPrice)}</Text>
-                      </View>
-                    )) : (
-                      <Text style={styles.calloutAddress}>Prices unavailable</Text>
-                    )}
-                  </View>
-                </Callout>
-              </Marker>
-            );
-          })}
-        </MapView>
+        {leafletHtml ? (
+          <LeafletView
+            source={{ html: leafletHtml }}
+            mapCenterPosition={mapCenterPosition}
+            zoom={mapZoom}
+            mapMarkers={mapMarkers}
+            mapShapes={mapShapes}
+            onMessageReceived={handleMapMessage}
+            onError={(event) => setMapError(event.nativeEvent.description || 'Leaflet map could not be loaded.')}
+            zoomControl={false}
+            attributionControl
+            doDebug={false}
+          />
+        ) : (
+          <View style={styles.mapLoading}>
+            {mapError ? (
+              <Text style={styles.mapErrorText}>{mapError}</Text>
+            ) : (
+              <>
+                <ActivityIndicator color={colors.green} />
+                <Text style={styles.mapLoadingText}>Loading map…</Text>
+              </>
+            )}
+          </View>
+        )}
+        {leafletHtml && mapError ? (
+          <View style={styles.mapError}>
+            <Text style={styles.mapErrorText}>{mapError}</Text>
+          </View>
+        ) : null}
         <Pressable
           accessibilityLabel="Find my location"
           onPress={() => {
@@ -619,7 +703,7 @@ const styles = StyleSheet.create({
   productTags: { alignItems: 'center', gap: 4, paddingRight: 4 },
   productTag: { maxWidth: 100, paddingHorizontal: 5, paddingVertical: 3, borderRadius: 3, backgroundColor: '#E8EDE5' },
   productTagSelected: { backgroundColor: colors.green },
-  productTagText: { color: colors.ink, fontSize: 8, fontWeight: '700' },
+  productTagText: { color: colors.ink, fontSize: 12, fontWeight: '700' },
   productTagTextSelected: { color: colors.white },
   title: { color: colors.ink, fontSize: 26, fontWeight: '800', marginTop: 3 },
   refreshButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.lime },
@@ -637,17 +721,11 @@ const styles = StyleSheet.create({
   radiusOptionSelected: { backgroundColor: colors.green },
   radiusOptionText: { color: colors.muted, fontSize: 11, fontWeight: '700' },
   radiusOptionTextSelected: { color: colors.white },
-  mapFrame: { marginHorizontal: 14, overflow: 'hidden', borderRadius: 5, backgroundColor: '#DCE6DC' },
-  markerContainer: { alignItems: 'center', gap: 1 },
-  markerLabel: { maxWidth: 100, paddingHorizontal: 5, paddingVertical: 3, overflow: 'hidden', borderRadius: 4, backgroundColor: colors.ink, color: colors.lime, fontSize: 9, fontWeight: '800', textAlign: 'center' },
-  markerLowestBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3, backgroundColor: colors.orange, color: colors.white, fontSize: 8, fontWeight: '900' },
-  markerLabelLowest: { backgroundColor: '#FFF0E6', color: colors.ink },
-  stationCallout: { width: 210, padding: 12, borderRadius: 5, backgroundColor: colors.white },
-  calloutTitle: { color: colors.ink, fontSize: 13, fontWeight: '800' },
-  calloutAddress: { color: colors.muted, fontSize: 10, marginTop: 3, marginBottom: 7 },
-  calloutPriceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3, borderTopWidth: 1, borderTopColor: colors.line },
-  calloutFuel: { color: colors.green, fontSize: 11, fontWeight: '700' },
-  calloutAmount: { color: colors.ink, fontSize: 11, fontWeight: '800' },
+  mapFrame: { position: 'relative', marginHorizontal: 14, overflow: 'hidden', borderRadius: 5, backgroundColor: '#DCE6DC' },
+  mapLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16 },
+  mapLoadingText: { color: colors.muted, fontSize: 11 },
+  mapError: { position: 'absolute', top: 12, left: 12, right: 12, padding: 10, borderRadius: 4, backgroundColor: colors.white },
+  mapErrorText: { color: '#A64A31', fontSize: 11, textAlign: 'center' },
   locateButton: { position: 'absolute', right: 12, bottom: 42, width: 42, height: 42, borderRadius: 4, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
   mapCaption: { position: 'absolute', bottom: 10, left: 10, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: colors.white, borderRadius: 3 },
   mapCaptionText: { color: colors.green, fontSize: 9, fontWeight: '800', letterSpacing: 0.6 },
@@ -675,10 +753,12 @@ const styles = StyleSheet.create({
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
   distanceText: { color: colors.muted, fontSize: 9 },
   priceList: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingRight: 8, marginTop: 4 },
-  fuelPrice: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 3, backgroundColor: '#EEF1EA' },
+  fuelPrice: { alignItems: 'flex-start', gap: 2, paddingHorizontal: 4, paddingVertical: 3, borderRadius: 3, backgroundColor: '#EEF1EA' },
+  fuelPriceHeader: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   fuelPriceLowest: { backgroundColor: '#EFF6D0' },
   fuelName: { color: colors.green, fontSize: 9, fontWeight: '700' },
   price: { color: colors.ink, fontSize: 12, fontWeight: '800' },
+  priceEffectiveTimestamp: { color: colors.muted, fontSize: 7 },
   lowestPrice: { color: colors.green },
   lowestBadge: { color: colors.green, fontSize: 6, fontWeight: '900' },
   noPrice: { color: colors.muted, fontSize: 9, marginTop: 3 },

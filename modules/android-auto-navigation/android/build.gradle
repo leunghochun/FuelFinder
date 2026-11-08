@@ -1,0 +1,16 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.fuelfinder.androidautonavigation'
+version = '1.0.0'
+
+android {
+  namespace 'com.fuelfinder.androidautonavigation'
+}
+
+dependencies {
+  implementation project(':iternio_react-native-auto-play')
+  implementation 'androidx.car.app:app:1.8.0-rc01'
+}

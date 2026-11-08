@@ -44,14 +44,24 @@ function withFuelFinderCarPlay(config) {
   config = withXcodeProject(config, (modConfig) => {
     const project = modConfig.modResults;
     const sourceFile = 'CarPlaySceneDelegate.swift';
+    const projectPath = path.posix.join(modConfig.modRequest.projectName, sourceFile);
     const references = project.hash.project.objects.PBXFileReference;
-    const alreadyAdded = Object.values(references).some(
-      (reference) => reference && reference.path === 'CarPlaySceneDelegate.swift',
+    let sceneDelegateReference = Object.values(references).find(
+      (reference) => reference && reference.path && path.posix.basename(reference.path) === sourceFile,
     );
-    if (!alreadyAdded) {
+    if (!sceneDelegateReference) {
       const appGroup = project.pbxGroupByName(modConfig.name.replace(/[^A-Za-z0-9]/g, ''));
-      project.addSourceFile(sourceFile, { target: project.getFirstTarget().uuid }, appGroup?.uuid);
+      const addedFile = project.addSourceFile(
+        sourceFile,
+        { target: project.getFirstTarget().uuid },
+        appGroup?.uuid,
+      );
+      sceneDelegateReference = addedFile && references[addedFile.fileRef];
     }
+    if (!sceneDelegateReference) {
+      throw new Error(`Could not add ${sourceFile} to the iOS project.`);
+    }
+    sceneDelegateReference.path = projectPath;
     return modConfig;
   });
 

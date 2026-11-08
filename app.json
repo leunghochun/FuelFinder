@@ -35,7 +35,8 @@
         {
           "locationWhenInUsePermission": "Fuel Finder uses your location to sort nearby fuel stations and show your position on the map."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

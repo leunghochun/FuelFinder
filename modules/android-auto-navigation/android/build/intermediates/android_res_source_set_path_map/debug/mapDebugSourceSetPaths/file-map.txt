@@ -1,0 +1,9 @@
+com.fuelfinder.androidautonavigation.android-auto-navigation-pngs-0 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/build/generated/res/pngs/debug
+com.fuelfinder.androidautonavigation.android-auto-navigation-updated_navigation_xml-1 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/build/generated/updated_navigation_xml/debug
+com.fuelfinder.androidautonavigation.android-auto-navigation-mergeDebugResources-2 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/build/intermediates/incremental/debug/mergeDebugResources/merged.dir
+com.fuelfinder.androidautonavigation.android-auto-navigation-mergeDebugResources-3 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/build/intermediates/incremental/debug/mergeDebugResources/stripped.dir
+com.fuelfinder.androidautonavigation.android-auto-navigation-debug-4 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/build/intermediates/merged_res/debug/mergeDebugResources
+com.fuelfinder.androidautonavigation.android-auto-navigation-debug-5 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/build/intermediates/packaged_res/debug/packageDebugResources
+com.fuelfinder.androidautonavigation.android-auto-navigation-debug-6 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/src/debug/res
+com.fuelfinder.androidautonavigation.android-auto-navigation-main-7 /Users/leunghochun/projects/FuelFinder/modules/android-auto-navigation/android/src/main/res
+gradleHome-0 /Users/leunghochun/.gradle

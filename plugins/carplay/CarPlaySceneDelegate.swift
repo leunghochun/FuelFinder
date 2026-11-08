@@ -244,7 +244,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
           distanceRemaining: Measurement(value: route.distance, unit: UnitLength.meters),
           timeRemaining: route.expectedTravelTime
         )
-        self.mapTemplate.update(estimates, for: trip)
+        self.mapTemplate.update(estimates, for: trip, with: .default)
         self.mapTemplate.showTripPreviews([trip], textConfiguration: nil)
       }
     }
@@ -257,7 +257,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         distanceRemaining: Measurement(value: route.distance, unit: UnitLength.meters),
         timeRemaining: route.expectedTravelTime
       ),
-      for: trip
+      for: trip,
+      with: .default
     )
   }
 
@@ -272,7 +273,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       maneuver.instructionVariants = [step.instructions]
       maneuver.initialTravelEstimates = CPTravelEstimates(
         distanceRemaining: Measurement(value: step.distance, unit: UnitLength.meters),
-        timeRemaining: step.expectedTravelTime
+        timeRemaining: expectedTravelTime(for: step, in: route)
       )
       return maneuver
     }
@@ -291,11 +292,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       maneuver.instructionVariants = [step.instructions]
       maneuver.initialTravelEstimates = CPTravelEstimates(
         distanceRemaining: Measurement(value: step.distance, unit: UnitLength.meters),
-        timeRemaining: step.expectedTravelTime
+        timeRemaining: expectedTravelTime(for: step, in: route)
       )
       return maneuver
     }
     if !maneuvers.isEmpty { session.upcomingManeuvers = maneuvers }
+  }
+
+  private func expectedTravelTime(for step: MKRoute.Step, in route: MKRoute) -> TimeInterval {
+    guard route.distance > 0 else { return 0 }
+    return route.expectedTravelTime * step.distance / route.distance
   }
 
   private func presentMessage(_ message: String) {

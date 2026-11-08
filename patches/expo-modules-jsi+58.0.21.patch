@@ -1,0 +1,22 @@
+diff --git a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift
+--- a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift
++++ b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift
+@@ -933,8 +933,9 @@
+   _ body: (borrowing facebook.jsi.Value) -> Void
+ ) rethrows {
+   try withUnsafeTemporaryAllocation(of: facebook.jsi.Value.self, capacity: 1) { buffer in
++    let slot = buffer.baseAddress!
+     // The isolated closure below runs synchronously on this thread.
+-    nonisolated(unsafe) let slot = buffer.baseAddress!
++    let slotAddress = UInt(bitPattern: slot)
+     expo.emplaceUndefined(slot)
+     defer {
+       expo.destroyValues(slot, 1)
+@@ -943,6 +944,7 @@
+     // a retain.
+     try runtime._withUnsafeGuaranteedRef { runtime in
+       try JavaScriptActor.assumeIsolated {
++        let slot = UnsafeMutablePointer<facebook.jsi.Value>(bitPattern: slotAddress)!
+         try encode(JavaScriptValue.Slot(slot), runtime)
+       }
+     }

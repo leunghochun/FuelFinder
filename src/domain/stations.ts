@@ -1,6 +1,7 @@
 export type FuelPrice = {
   fuel: string;
   amount: number;
+  priceChangeEffectiveTimestamp?: string;
 };
 
 export type FuelStation = {
@@ -67,7 +68,16 @@ function extractPrices(record: RecordValue): FuelPrice[] {
       if (Array.isArray(nestedPrices)) return extractPrices({ fuel_prices: nestedPrices });
       const amount = numericValue(firstValue(item, ['price', 'amount', 'value', 'pricePence', 'price_pence']));
       const fuel = textValue(firstValue(item, ['fuelType', 'fuel_type', 'fuel', 'type', 'product', 'name']), 'Fuel');
-      return amount === undefined ? [] : [{ fuel, amount }];
+      const priceChangeEffectiveTimestamp = textValue(
+        firstValue(item, ['priceChangeEffectiveTimestamp', 'price_change_effective_timestamp']),
+      );
+      return amount === undefined
+        ? []
+        : [{
+          fuel,
+          amount,
+          ...(priceChangeEffectiveTimestamp ? { priceChangeEffectiveTimestamp } : {}),
+        }];
     });
   }
 

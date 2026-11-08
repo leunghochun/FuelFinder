@@ -131,7 +131,7 @@ test('merges fuel-price records onto stations by forecourt ID', () => {
 
   assert.deepEqual(merged[0].prices, [
     { fuel: 'E10', amount: 149.9 },
-    { fuel: 'B7', amount: 155.2 },
+    { fuel: 'B7', amount: 155.2, priceChangeEffectiveTimestamp: '2026-11-02T10:00:00Z' },
   ]);
   assert.deepEqual(merged[0].priceSourceData, [{
     node_id: 'pfs-1',
@@ -143,6 +143,25 @@ test('merges fuel-price records onto stations by forecourt ID', () => {
     ],
   }]);
   assert.deepEqual(merged[1].prices, []);
+});
+
+test('normalizes effective price-change timestamps from nested station prices', () => {
+  const [station] = normalizeStations([{
+    id: 'station-1',
+    latitude: 51.5,
+    longitude: -0.12,
+    fuel_prices: [{
+      fuel_type: 'E10',
+      price: '149.9',
+      price_change_effective_timestamp: '2026-11-02T10:00:00Z',
+    }],
+  }]);
+
+  assert.deepEqual(station.prices, [{
+    fuel: 'E10',
+    amount: 149.9,
+    priceChangeEffectiveTimestamp: '2026-11-02T10:00:00Z',
+  }]);
 });
 
 test('collects station records until an explicit empty batch', async () => {
